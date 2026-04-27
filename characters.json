@@ -1,0 +1,62 @@
+{
+  "defaults": {
+    "parameters": {
+      "num_ctx": 65536,
+      "num_predict": 2048
+    }
+  },
+  "characters": {
+    "my-character": {
+      "description": "Example character \u2014 replace or delete this",
+      "think": false,
+      "behavior": {
+        "creativity": "medium",
+        "response_length": "medium",
+        "formality": "neutral",
+        "reasoning": false
+      },
+      "system_prompt": "You are [character name]. [Describe personality, speech patterns, and how they should behave as an assistant.]",
+      "backends": {
+        "ollama": {
+          "base_model": "qwen3:32b",
+          "parameters": {
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "top_k": 20,
+            "repeat_penalty": 1.5,
+            "num_ctx": 32768,
+            "num_predict": 2048
+          }
+        },
+        "openai": {
+          "base_model": "gpt-4o",
+          "parameters": {
+            "temperature": 0.7,
+            "max_tokens": 2048
+          }
+        },
+        "anthropic": {
+          "base_model": "claude-sonnet-4-20250514",
+          "parameters": {
+            "temperature": 0.7,
+            "max_tokens": 2048
+          }
+        }
+      }
+    },
+    "legacy-example": {
+      "_comment": "Old-style config \u2014 still works perfectly. Top-level parameters block is backwards compatible.",
+      "think": false,
+      "base_model": "qwen3:32b",
+      "parameters": {
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "top_k": 20,
+        "repeat_penalty": 1.5,
+        "num_ctx": 32768,
+        "num_predict": 2048
+      },
+      "system_prompt": "You are a legacy example. This format still works."
+    }
+  }
+}

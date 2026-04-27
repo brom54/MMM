@@ -1,0 +1,12 @@
+# MMM — Make Modelfiles Matter
+# Core dependencies
+fastapi>=0.100.0
+uvicorn>=0.23.0
+httpx>=0.24.0
+
+# Environment file support
+python-dotenv>=1.0.0
+
+# Phase 2.5 — uncomment when adding cloud provider support
+# keyring>=24.0.0        # OS keychain integration for API key storage
+# cryptography>=41.0.0   # Encrypted secrets file support

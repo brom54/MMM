@@ -1,0 +1,29 @@
+{
+  "_comment": "Add this entry to your characters.json under 'characters'",
+
+  "ash-agent": {
+    "description": "Ash Williams — agentic version on gemma4 27b Q8. Tool-capable, persona-forward.",
+    "think": false,
+
+    "behavior": {
+      "creativity":      "low",
+      "response_length": "medium",
+      "formality":       "very_casual",
+      "reasoning":       false
+    },
+
+    "backends": {
+      "ollama": {
+        "base_model": "gemma4:31b-it-q8_0",
+        "parameters": {
+          "temperature":    0.4,
+          "top_p":          0.85,
+          "top_k":          20,
+          "repeat_penalty": 1.1,
+          "num_ctx":        65536,
+          "num_predict":    1024
+        }
+      }
+    }
+  }
+}

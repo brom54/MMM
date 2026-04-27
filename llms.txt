@@ -1,0 +1,101 @@
+# llms.txt — MMM (Make Modelfiles Matter)
+# This file describes the project for LLM consumption.
+# See https://llmstxt.org for the llms.txt specification.
+
+## Project
+
+MMM is a universal AI consistency proxy written in Python with FastAPI. It sits between AI front-ends (Open WebUI, OpenClaw, n8n, Discord bots, LangGraph agents) and inference backends (Ollama, llama.cpp, LM Studio, vLLM, cloud APIs). MMM intercepts requests, strips the front-end's system prompt, injects the user's character/agent definition, applies parameter overrides, and forwards to the backend. The response streams back through MMM with optional thinking token stripping and heartbeat keepalive.
+
+## Why It Exists
+
+Ollama Modelfiles define personality, parameters, and behavior perfectly — but every front-end overrides them with its own defaults. Open WebUI replaces the system prompt. OpenClaw injects 17k tokens of workspace context. n8n sends raw prompts with no personality. MMM solves this by being the single source of truth for how a model should behave, regardless of which front-end or backend is in use.
+
+## Core Concepts
+
+CHARACTER: A named agent definition in characters.json containing a system prompt, parameters, and optional behavior block. When a front-end requests a model matching a character key, MMM intercepts and injects the character config. Unknown models pass through untouched.
+
+DEFAULTS: A global parameter block in characters.json that applies to all non-character models. Useful for setting context window limits, response caps, and batch sizes across all models without individual configuration.
+
+BYPASS MODE: A runtime toggle that makes MMM act as a transparent proxy. When bypass is on, no character injection occurs — all requests pass through untouched. Toggle via POST /mmm/bypass/on and /mmm/bypass/off. No restart needed.
+
+BEHAVIOR BLOCK: Optional semantic fields (creativity, response_length, formality, reasoning) that auto-translate to backend-specific parameters. Users describe intent, MMM translates to temperature, max_tokens, etc.
+
+HEARTBEAT: Zero-width space tokens sent to front-ends while waiting for the backend to respond. Prevents front-end timeout errors during slow inference on large models.
+
+## Architecture
+
+Front-ends connect to MMM on port 11434 (configurable). MMM forwards to the inference backend on a different port (default 11435 for Ollama). The front-end sees a standard Ollama-compatible API and doesn't know MMM exists.
+
+Request flow: front-end sends request → MMM checks character match → if match: strip front-end system prompt, inject character system prompt, apply character parameters → if no match: apply global defaults → forward to backend → stream response back with heartbeat keepalive and optional thinking token stripping.
+
+## Files
+
+proxy.py — Main FastAPI proxy server. Handles request interception, character injection, heartbeat, streaming, bypass mode, admin endpoints, and key management endpoints.
+
+router.py — Backend routing, health checks, model cache, and in-memory stats collection (StatsCollector, RequestRecord, CharacterStats).
+
+behavior.py — Translates semantic behavior fields to backend-specific parameters. Maps creativity to temperature, response_length to max_tokens, formality to system prompt hints, reasoning to think flags.
+
+auth.py — Inbound authentication middleware. Checks API keys against SQLite database, falls back to master key from .env. Includes RequestContext that flows through every request for audit attribution. IP allowlist support.
+
+database.py — SQLite layer for identity/key management and persistent audit logging. Schema is forward-compatible with user accounts (username, password_hash, email columns exist but are nullable). Handles key generation, hashing, lookup, revocation, rotation.
+
+secrets_provider.py — Outbound API key management for cloud providers. Currently env-backed, interface ready for keyring and encrypted file backends.
+
+modelfile_to_json.py — Converts Ollama Modelfiles to characters.json entries. Extracts FROM, PARAMETER, and SYSTEM directives.
+
+watcher.py — Watches the modelfiles/ directory for new or changed Modelfiles. Auto-converts and reloads characters.json.
+
+characters.json — Character definitions, global defaults, and optional behavior blocks. Supports both new schema (behavior + per-backend overrides) and legacy schema (top-level parameters block).
+
+backends/__init__.py — Backend registry. Maps backend names to classes.
+backends/base.py — Abstract BaseBackend interface. Defines translate_request, translate_response_chunk, translate_response_full, map_parameters, is_available, list_models.
+backends/ollama.py — Fully implemented Ollama backend.
+backends/llamacpp.py — llama.cpp backend stub with implementation notes.
+backends/lmstudio.py — LM Studio backend stub with pass-through mode.
+backends/vllm.py — vLLM backend stub.
+backends/kobold.py — KoboldCpp backend stub.
+backends/mlx.py — MLX backend stub.
+
+## API Endpoints
+
+GET /mmm/status — Health, backend state, model cache, per-character stats, bypass state, defaults.
+POST /mmm/refresh — Refresh model cache from backend.
+GET /mmm/models — List cached models.
+GET /mmm/bypass — Check bypass mode state.
+POST /mmm/bypass/on — Enable bypass (transparent proxy, no injection).
+POST /mmm/bypass/off — Disable bypass (injection active).
+POST /mmm/keys/generate — Create new API key. Body: {"label": "name", "type": "service"|"user"}. Key returned once.
+GET /mmm/keys — List identities (metadata only, never key values).
+POST /mmm/keys/{id}/revoke — Deactivate an API key.
+POST /mmm/keys/{id}/rotate — Generate new key for existing identity, old key immediately invalid.
+GET /mmm/audit — Query persistent request audit log. Filters: identity_id, character, limit.
+
+## Configuration
+
+Environment variables loaded from .env file:
+PROXY_PORT (default 11435) — port MMM listens on.
+OLLAMA_HOST (default http://localhost:11434) — backend URL.
+BACKEND (default ollama) — backend type.
+MMM_API_KEY (default CHANGE_ME) — inbound auth key. Empty disables auth.
+MMM_ALLOWED_IPS (default empty) — comma-separated IP/CIDR allowlist.
+HEARTBEAT_INTERVAL (default 3) — seconds between keepalive pings.
+MODEL_REFRESH_HOURS (default 6) — hours between model cache auto-refresh.
+
+## Key Design Decisions
+
+All character config fields are optional. Existing configs never break on update.
+Legacy parameters blocks are supported forever alongside the new behavior/backends schema.
+API keys are stored as SHA-256 hashes. Plain keys returned once on generation, never stored.
+The identities table in SQLite doubles as the future user accounts table — username, password_hash, email columns exist now but are nullable. No migration needed when user accounts are added.
+Stats collection is silent — data accumulates in memory (rolling window) and SQLite (persistent) but nothing is shown to users unless they query /mmm/status or /mmm/audit.
+Bypass mode is a runtime toggle, not a restart. Front-ends stay connected throughout.
+Global defaults apply to non-character models only. Character configs always take priority.
+
+## Technology
+
+Python 3.10+, FastAPI, uvicorn, httpx, python-dotenv, SQLite (stdlib). No heavy dependencies.
+
+## License
+
+MIT

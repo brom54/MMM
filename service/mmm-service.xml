@@ -1,0 +1,18 @@
+<service>
+  <id>mmm-proxy</id>
+  <name>MMM — Make Modelfiles Matter</name>
+  <description>Ollama character injection proxy. Injects system prompts and parameters for configured character models.</description>
+  <executable>python</executable>
+  <arguments>C:\mmm\proxy.py</arguments>
+  <workingdirectory>C:\mmm</workingdirectory>
+  <env name="OLLAMA_HOST" value="http://localhost:11434"/>
+  <env name="PROXY_PORT" value="11435"/>
+  <logpath>C:\mmm\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="5 sec"/>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="none"/>
+</service>

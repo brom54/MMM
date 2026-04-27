@@ -1,0 +1,17 @@
+[Unit]
+Description=MMM — Make Modelfiles Matter (Ollama Character Proxy)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=exec
+User=YOUR_USERNAME
+WorkingDirectory=/opt/mmm
+ExecStart=/usr/bin/python3 /opt/mmm/proxy.py
+Restart=on-failure
+RestartSec=5s
+Environment=OLLAMA_HOST=http://localhost:11434
+Environment=PROXY_PORT=11435
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mmm.proxy</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/usr/local/opt/mmm/proxy.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/usr/local/opt/mmm</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>OLLAMA_HOST</key>
+        <string>http://localhost:11434</string>
+        <key>PROXY_PORT</key>
+        <string>11435</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/mmm.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/mmm.error.log</string>
+</dict>
+</plist>
