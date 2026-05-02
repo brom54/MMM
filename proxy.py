@@ -54,6 +54,7 @@ from database import (
 #  CONFIG
 # ─────────────────────────────────────────────
 OLLAMA_HOST        = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_API_KEY     = os.getenv("OLLAMA_API_KEY", "")         # Bearer token for OLLAMA_HOST
 PROXY_PORT         = int(os.getenv("PROXY_PORT", "11435"))
 BACKEND_NAME       = os.getenv("BACKEND", "ollama")
 CONFIG_FILE        = Path(os.getenv("CONFIG_FILE", Path(__file__).parent / "characters.json"))
@@ -88,8 +89,9 @@ def load_config() -> tuple[dict, dict]:
         return {}, {}
     with open(CONFIG_FILE) as f:
         data = json.load(f)
-    characters = data.get("characters", {})
-    defaults   = data.get("defaults", {})
+
+    defaults = data.get("defaults", {}) or {}
+    characters = data.get("characters", {}) or {}
 
     # Validate behavior blocks on load
     for name, char in characters.items():
@@ -99,13 +101,14 @@ def load_config() -> tuple[dict, dict]:
             for w in warnings:
                 log.warning(f"Character '{name}': {w}")
 
-    if defaults:
-        default_params = defaults.get("parameters", {})
-        log.info(f"Global defaults: {default_params}")
-    log.info(f"Loaded {len(characters)} character(s): {', '.join(characters.keys())}")
-    return characters, defaults
+    default_params = defaults.get("parameters", {}) or {}
+    log.info(
+        f"Loaded defaults: {len(default_params)} parameter(s); "
+        f"{len(characters)} character(s): {', '.join(characters.keys())}"
+    )
+    return defaults, characters
 
-CHARACTERS, DEFAULTS = load_config()
+DEFAULTS, CHARACTERS = load_config()
 
 # ─────────────────────────────────────────────
 #  BYPASS MODE
@@ -242,8 +245,40 @@ async def stream_with_heartbeat(request_method, url, params, headers,
 # ─────────────────────────────────────────────
 #  CHARACTER INJECTION
 # ─────────────────────────────────────────────
+def apply_defaults_to_request(body: dict, defaults: dict,
+                              backend_name: str,
+                              request_options: dict | None = None) -> dict:
+    """
+    Apply global defaults to every generation request.
+
+    Merge order is intentional:
+        1. defaults.parameters
+        2. explicit request options
+
+    Character/backend overrides are applied later by inject_character(), with
+    explicit request options still winning last.
+    """
+    params = (defaults or {}).get("parameters", {}) or {}
+    if params:
+        mapped = backend.map_parameters(params) if hasattr(backend, "map_parameters") else params
+        body["options"] = {**mapped, **(body.get("options", {}) or {})}
+
+    keep_alive = (defaults or {}).get("keep_alive")
+    if keep_alive is not None and "keep_alive" not in body:
+        body["keep_alive"] = keep_alive
+
+    # Thinking is an Ollama request-level field, not an options parameter.
+    # Default it here so pass-through models can still suppress thinking output
+    # unless the caller explicitly asks otherwise.
+    if "think" in (defaults or {}) and "think" not in body:
+        body["think"] = defaults["think"]
+
+    return body
+
+
 def inject_character(body: dict, character: dict, resolved_backend,
-                     backend_name: str) -> dict:
+                     backend_name: str,
+                     request_options: dict | None = None) -> dict:
     system_prompt   = character.get("system_prompt", "")
     behavior        = character.get("behavior", {})
     think           = character.get("think", False)
@@ -272,10 +307,20 @@ def inject_character(body: dict, character: dict, resolved_backend,
     # Apply behavior translation (with backend-specific override)
     if behavior or backend_params:
         body = apply_behavior_to_request(body, behavior, backend_name, backend_params)
+
+        # Preserve intended precedence:
+        # defaults < named character/model params < explicit request options.
+        if request_options:
+            body["options"] = {**(body.get("options", {}) or {}), **request_options}
     elif character.get("parameters"):
-        # Legacy: top-level parameters block (backwards compatible)
+        # Legacy: top-level parameters block (backwards compatible).
+        # Preserve precedence: defaults < legacy params < explicit request options.
         mapped = resolved_backend.map_parameters(character["parameters"])
-        body["options"] = {**body.get("options", {}), **mapped}
+        body["options"] = {
+            **(body.get("options", {}) or {}),
+            **mapped,
+            **(request_options or {}),
+        }
 
     # Apply thinking mode
     if resolved_backend.supports_thinking:
@@ -294,9 +339,9 @@ async def mmm_status():
         "mmm":        "Make Modelfiles Matter",
         "bypass":     BYPASS_MODE,
         "router":     router.status(),
+        "defaults":   DEFAULTS,
         "characters": list(CHARACTERS.keys()),
         "config":     str(CONFIG_FILE),
-        "defaults":   DEFAULTS,
     })
 
 @app.post("/mmm/refresh")
@@ -304,8 +349,10 @@ async def mmm_refresh():
     """Refresh model cache and rescan modelfiles directory."""
     log.info("Manual refresh requested")
 
-    # Rescan modelfiles directory and reload characters
+    # Rescan modelfiles directory and reload characters/defaults
     watcher.trigger()
+    global DEFAULTS, CHARACTERS
+    DEFAULTS, CHARACTERS = load_config()
 
     # Refresh model cache from backend
     await router.check_health(http_client)
@@ -477,7 +524,9 @@ async def mmm_audit(request: Request, limit: int = 100,
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
 async def proxy(request: Request, path: str):
     body_bytes      = await request.body()
-    headers         = {k: v for k, v in request.headers.items() if k.lower() != "host"}
+    headers         = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "authorization")}
+    if OLLAMA_API_KEY:
+        headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
     is_character    = False
     model_name      = "unknown"
     character       = None
@@ -489,6 +538,15 @@ async def proxy(request: Request, path: str):
             body = json.loads(body_bytes)
             requested_model = body.get("model", "")
             model_name = requested_model
+            request_options = dict(body.get("options", {}) or {})
+
+            # Global defaults apply to every generation request, including
+            # pass-through model requests. Named character/model settings may
+            # override these later; explicit request options win last.
+            body = apply_defaults_to_request(body, DEFAULTS, BACKEND_NAME, request_options)
+            body_bytes = json.dumps(body).encode()
+            headers["content-length"] = str(len(body_bytes))
+            headers["content-type"] = "application/json"
 
             # Capture front-end system prompt BEFORE injection
             # This is what MMM strips — used for stats delta
@@ -522,7 +580,9 @@ async def proxy(request: Request, path: str):
             if matched_key:
                 log.info(f"Intercepting '{requested_model}' → injecting '{matched_key}'")
                 resolved_backend, resolved_host = router.resolve(requested_model, character)
-                body = inject_character(body, character, resolved_backend, BACKEND_NAME)
+                body = inject_character(
+                    body, character, resolved_backend, BACKEND_NAME, request_options
+                )
                 body, path = resolved_backend.translate_request(body, path)
                 body_bytes = json.dumps(body).encode()
                 headers["content-length"] = str(len(body_bytes))
@@ -543,16 +603,6 @@ async def proxy(request: Request, path: str):
             else:
                 log.info(f"Pass-through: '{requested_model}'")
                 resolved_backend, resolved_host = router.resolve(requested_model)
-
-                # Apply global defaults to non-character models
-                if DEFAULTS and not BYPASS_MODE:
-                    default_params = DEFAULTS.get("parameters", {})
-                    if default_params:
-                        body["options"] = {**default_params, **body.get("options", {})}
-                        body_bytes = json.dumps(body).encode()
-                        headers["content-length"] = str(len(body_bytes))
-                        headers["content-type"] = "application/json"
-                        log.info(f"  Applied defaults: {list(default_params.keys())}")
 
         except json.JSONDecodeError:
             log.warning("Non-JSON body — passing through raw")

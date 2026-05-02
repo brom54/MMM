@@ -152,17 +152,17 @@ def apply_behavior_to_request(body: dict, behavior: dict, backend_name: str,
     Returns:
         Modified request body
     """
-    if not behavior:
-        return body
+    # Translate behavior to params and prompt hint. Backend-specific params
+    # still apply even when no behavior block exists.
+    behavior_params, prompt_hint = translate_behavior(behavior or {}, backend_name)
 
-    # Translate behavior to params and prompt hint
-    behavior_params, prompt_hint = translate_behavior(behavior, backend_name)
-
-    if behavior_params:
-        # Merge: backend-specific params win over behavior-derived params
-        merged = {**behavior_params, **(backend_params or {})}
-        body["options"] = {**body.get("options", {}), **merged}
-        log.debug(f"Applied behavior params: {behavior_params}")
+    merged = {**behavior_params, **(backend_params or {})}
+    if merged:
+        # Merge: existing request/default options first, then named params.
+        # The proxy may re-apply explicit request options afterward so callers
+        # can still override defaults and named profiles deliberately.
+        body["options"] = {**(body.get("options", {}) or {}), **merged}
+        log.debug(f"Applied behavior/backend params: {merged}")
 
     if prompt_hint:
         # Append hint to system message if present
